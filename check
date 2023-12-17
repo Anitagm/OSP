@@ -1,0 +1,85 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <dirent.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <pthread.h>
+
+#define MAX_PATH_LENGTH 256
+#define MAX_THREADS 100
+
+typedef struct {
+    char path[MAX_PATH_LENGTH];
+    int file_count;
+} DirectoryData;
+
+void* process_directory(void* arg) {
+    DirectoryData* data = (DirectoryData*)arg;
+    char path[MAX_PATH_LENGTH];
+    struct dirent* entry;
+    struct stat file_stat;
+
+    DIR* dir = opendir(data->path);
+    if (dir == NULL) {
+        perror("Error opening directory");
+        pthread_exit(NULL);
+    }
+
+    while ((entry = readdir(dir)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+            continue;
+
+        snprintf(path, MAX_PATH_LENGTH, "%s/%s", data->path, entry->d_name);
+
+        if (stat(path, &file_stat) == -1) {
+            perror("Error getting file stat");
+            continue;
+        }
+
+        if (S_ISDIR(file_stat.st_mode)) {
+            pthread_t thread;
+            DirectoryData* sub_data = malloc(sizeof(DirectoryData));
+            strcpy(sub_data->path, path);
+            sub_data->file_count = 0;
+
+            if (pthread_create(&thread, NULL, process_directory, sub_data) != 0) {
+                perror("Error creating thread");
+                free(sub_data);
+                continue;
+            }
+
+            pthread_join(thread, NULL);
+
+            data->file_count += sub_data->file_count;
+
+            free(sub_data);
+        } else if (S_ISREG(file_stat.st_mode)) {
+            data->file_count++;
+        }
+    }
+
+    closedir(dir);
+    pthread_exit(NULL);
+}
+
+int main() {
+    char root_path[MAX_PATH_LENGTH];
+    printf("Enter directory path: ");
+    scanf("%s", root_path);
+
+    DirectoryData root_data;
+    strcpy(root_data.path, root_path);
+    root_data.file_count = 0;
+
+    pthread_t root_thread;
+    if (pthread_create(&root_thread, NULL, process_directory, &root_data) != 0) {
+        perror("Error creating thread");
+        return 0;
+    }
+
+    pthread_join(root_thread, NULL);
+
+    printf("Total files in directory :\n'%s' %d\n", root_path, root_data.file_count);
+
+    return 0;
+}
