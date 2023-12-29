@@ -1,0 +1,70 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <dirent.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <pthread.h>
+
+#define MAX_PATH_LENGTH 256
+
+int total_files = 0; // Shared variable
+pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+
+void* process_directory(void* arg) {
+    const char* path = (const char*) arg;
+    struct dirent* entry;
+    struct stat file_stat;
+    int local_count = 0;
+
+    DIR* dir = opendir(path);
+    if (dir == NULL) {
+        perror("Error opening directory");
+        pthread_exit(NULL);
+    }
+
+    while ((entry = readdir(dir)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+            continue;
+
+        char entry_path[MAX_PATH_LENGTH];
+        snprintf(entry_path, MAX_PATH_LENGTH, "%s/%s", path, entry->d_name);
+
+        if (stat(entry_path, &file_stat) == -1) {
+            perror("Error getting file stat");
+            continue;
+        }
+
+        if (S_ISDIR(file_stat.st_mode)) {
+            pthread_t thread;
+            pthread_create(&thread, NULL, process_directory, (void*) entry_path);
+            pthread_join(thread, NULL);
+        } else if (S_ISREG(file_stat.st_mode)) {
+            // Regular file
+            printf("Found file: %s\n", entry_path);
+            local_count++;
+        }
+    }
+
+    closedir(dir);
+
+    pthread_mutex_lock(&mutex);
+    total_files += local_count;
+    pthread_mutex_unlock(&mutex);
+    pthread_exit(NULL);
+}
+
+int main() {
+    char path[MAX_PATH_LENGTH];
+    printf("Enter a directory path: ");
+    scanf("%s", path);
+
+    pthread_t root_thread;
+    pthread_create(&root_thread, NULL, process_directory, (void*) path);
+    pthread_join(root_thread, NULL);
+    printf("Total files: %d\n", total_files);
+
+    return 0;
+}
