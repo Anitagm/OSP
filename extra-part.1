@@ -1,0 +1,49 @@
+ if (S_ISDIR(file_stat.st_mode)) {
+            // Create a new process for the subdirectory
+            pid_t pid = fork();
+
+            if (pid < 0) {
+                perror("Error forking process");
+                continue;
+            } else if (pid == 0) {
+                // Child process
+                DirectoryData sub_data;
+                strcpy(sub_data.path, path);
+                sub_data.file_count = 0;
+                sub_data.txt_count = 0;
+                sub_data.c_count = 0;
+                sub_data.doc_count = 0;
+                strcpy(sub_data.smallest_file, "");
+                strcpy(sub_data.largest_file, "");
+                sub_data.smallest_file_size = LLONG_MAX;
+                sub_data.largest_file_size = 0;
+
+                process_directory(&sub_data);
+
+                exit(0);
+            } else {
+                // Parent process
+                int status;
+                waitpid(pid, &status, 0);
+
+                // Update the parent's data based on the child's data
+                if (WIFEXITED(status)) {
+                    DirectoryData sub_data;
+                    sub_data = *(DirectoryData*)WEXITSTATUS(status);
+
+                    data->file_count += sub_data.file_count;
+                    data->txt_count += sub_data.txt_count;
+                    data->c_count += sub_data.c_count;
+                    data->doc_count += sub_data.doc_count;
+
+                    if (sub_data.smallest_file_size < data->smallest_file_size) {
+                        strcpy(data->smallest_file, sub_data.smallest_file);
+                        data->smallest_file_size = sub_data.smallest_file_size;
+                    }
+
+                    if (sub_data.largest_file_size > data->largest_file_size) {
+                        strcpy(data->largest_file, sub_data.largest_file);
+                        data->largest_file_size = sub_data.largest_file_size;
+                    }
+                }
+            }
