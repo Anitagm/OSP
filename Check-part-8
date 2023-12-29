@@ -1,0 +1,70 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <dirent.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+
+#define MAX_PATH_LENGTH 256
+
+void process_directory(const char* path) {
+    struct dirent* entry;
+    struct stat file_stat;
+
+    DIR* dir = opendir(path);
+    if (dir == NULL) {
+        perror("Error opening directory");
+        return;
+    }
+
+    while ((entry = readdir(dir)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+            continue;
+
+        char entry_path[MAX_PATH_LENGTH];
+        snprintf(entry_path, MAX_PATH_LENGTH, "%s/%s", path, entry->d_name);
+
+        if (stat(entry_path, &file_stat) == -1) {
+            perror("Error getting file stat");
+            continue;
+        }
+
+        if (S_ISDIR(file_stat.st_mode)) {
+            // Directory?
+            pid_t pid = fork();
+            if (pid == -1) {
+                perror("Error creating child process");
+                continue;
+            }
+
+            if (pid == 0) {
+                // Child process
+                process_directory(entry_path);
+                exit(0);
+            }
+        } else if (S_ISREG(file_stat.st_mode)) {
+            // Regular file
+            printf("Found file: %s\n", entry_path);
+            // Create a thread for further processing
+            // You can implement the thread creation and processing logic here
+        }
+    }
+
+    closedir(dir);
+}
+
+int main() {
+    char path[MAX_PATH_LENGTH];
+    printf("Enter a directory path: ");
+    scanf("%s", path);
+
+    process_directory(path);
+
+    // Wait for all child processes to finish
+    while (wait(NULL) > 0)
+        ;
+
+    return 0;
+}
