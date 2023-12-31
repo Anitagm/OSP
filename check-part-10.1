@@ -1,0 +1,129 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <dirent.h>
+#include <string.h>
+#include <sys/stat.h>
+
+#define MAX_PATH_LENGTH 256
+
+typedef struct {
+    char path[MAX_PATH_LENGTH];
+    int file_count;
+    int txt_count;
+    int c_count;
+    int doc_count;
+    char smallest_file[MAX_PATH_LENGTH];
+    char largest_file[MAX_PATH_LENGTH];
+    long long smallest_file_size;
+    long long largest_file_size;
+} DirectoryData;
+
+void process_directory(DirectoryData* data) {
+    char path[MAX_PATH_LENGTH];
+    struct dirent* entry;
+    struct stat file_stat;
+
+    DIR* dir = opendir(data->path);
+    if (dir == NULL) {
+        perror("Error opening directory");
+        return;
+    }
+
+    while ((entry = readdir(dir)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+            continue;
+
+        snprintf(path, MAX_PATH_LENGTH, "%s/%s", data->path, entry->d_name);
+
+        if (stat(path, &file_stat) == -1) {
+            perror("Error getting file stat");
+            continue;
+        }
+
+        if (S_ISDIR(file_stat.st_mode)) {
+            // Directory?
+            DirectoryData sub_data;
+            strcpy(sub_data.path, path);
+            sub_data.file_count = 0;
+            sub_data.txt_count = 0;
+            sub_data.c_count = 0;
+            sub_data.doc_count = 0;
+            strcpy(sub_data.smallest_file, "");
+            strcpy(sub_data.largest_file, "");
+            sub_data.smallest_file_size = LLONG_MAX;
+            sub_data.largest_file_size = LLONG_MIN;
+
+            process_directory(&sub_data);
+
+            data->file_count += sub_data.file_count;
+            data->txt_count += sub_data.txt_count;
+            data->c_count += sub_data.c_count;
+            data->doc_count += sub_data.doc_count;
+
+            if (sub_data.smallest_file_size < data->smallest_file_size) {
+                strcpy(data->smallest_file, sub_data.smallest_file);
+                data->smallest_file_size = sub_data.smallest_file_size;
+            }
+
+            if (sub_data.largest_file_size > data->largest_file_size) {
+                strcpy(data->largest_file, sub_data.largest_file);
+                data->largest_file_size = sub_data.largest_file_size;
+            }
+        } else if (S_ISREG(file_stat.st_mode)) {
+            data->file_count++;
+
+            char* file_extension = strrchr(entry->d_name, '.');
+            if (file_extension != NULL) {
+                if (strcmp(file_extension, ".txt") == 0) {
+                    data->txt_count++;
+                } else if (strcmp(file_extension, ".c") == 0) {
+                    data->c_count++;
+                } else if (strcmp(file_extension, ".doc") == 0) {
+                    data->doc_count++;
+                }
+                long long file_size = file_stat.st_size;
+
+                if (file_size < data->smallest_file_size) {
+                    strcpy(data->smallest_file, path);
+                    data->smallest_file_size = file_size;
+                }
+
+                if (file_size > data->largest_file_size) {
+                    strcpy(data->largest_file, path);
+                    data->largest_file_size = file_size;
+                }
+            }
+        }
+    }
+    closedir(dir);
+}
+
+int main() {
+    char root_path[MAX_PATH_LENGTH];
+    printf("Enter the root path: ");
+    fgets(root_path, MAX_PATH_LENGTH, stdin);
+    root_path[strcspn(root_path, "\n")] = '\0';
+
+    DirectoryData directory_data;
+    strcpy(directory_data.path, root_path);
+    directory_data.file_count = 0;
+    directory_data.txt_count = 0;
+    directory_data.c_count = 0;
+    directory_data.doc_count = 0;
+    strcpy(directory_data.smallest_file, "");
+    strcpy(directory_data.largest_file, "");
+    directory_data.smallest_file_size = LLONG_MAX;
+    directory_data.largest_file_size = LLONG_MIN;
+
+    process_directory(&directory_data);
+
+    printf("Total number of files: %d\n", directory_data.file_count);
+    printf("Number of types of files:\n");
+    printf("TXT files: %d\n", directory_data.txt_count);
+    printf("C files: %d\n", directory_datac_count);
+    printf("DOC files: %d\n", directory_data.doc_count);
+    printf("Smallest file: %s (%lld bytes)\n", directory_data.smallest_file, directory_data.smallest_file_size);
+    printf("Largest file: %s (%lld bytes)\n", directory_data.largest_file, directory_data.largest_file_size);
+
+    return 0;
+}
