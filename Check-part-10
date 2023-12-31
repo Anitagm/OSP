@@ -1,0 +1,239 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <dirent.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <sys/mman.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <fcntl.h>
+#include <pthread.h>
+#include <semaphore.h>
+#include <limits.h>
+#include <unistd.h>
+
+#define MAX_PATH_LENGTH 256
+#define MAX_THREADS 100
+
+#define SHARED_FILE_COUNT "/file_count"
+#define SHARED_FILE_DATA "/file_data"
+#define SHARED_SMALLEST_FILE_SIZE "/smallest_file_size"
+#define SHARED_LARGEST_FILE_SIZE "/largest_file_size"
+
+typedef struct {
+    char path[MAX_PATH_LENGTH];
+    int file_count;
+    int txt_count;
+    int c_count;
+    int doc_count;
+} DirectoryData;
+
+typedef struct {
+    char smallest_file[MAX_PATH_LENGTH];
+    char largest_file[MAX_PATH_LENGTH];
+    long long smallest_file_size;
+    long long largest_file_size;
+} FileData;
+
+sem_t* semaphore;
+
+int* file_count;
+DirectoryData* directory_data;
+FileData* file_data;
+pthread_mutex_t* mutex;
+
+void* process_directory(void* arg) {
+    DirectoryData* data = (DirectoryData*)arg;
+    char path[MAX_PATH_LENGTH];
+    struct dirent* entry;
+    struct stat file_stat;
+
+    DIR* dir = opendir(data->path);
+    if (dir == NULL) {
+        perror("Error opening directory");
+        pthread_exit(NULL);
+    }
+
+    while ((entry = readdir(dir)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+            continue;
+
+        snprintf(path, MAX_PATH_LENGTH, "%s/%s", data->path, entry->d_name);
+
+        if (stat(path, &file_stat) == -1) {
+            perror("Error getting file stat");
+            continue;
+        }
+
+        if (S_ISDIR(file_stat.st_mode)) {
+            // Directory?
+            pid_t pid = fork();
+            if (pid == -1) {
+                perror("Error creating child process");
+                continue;
+            } else if (pid == 0) {
+                // Child process
+                DirectoryData sub_data;
+                strcpy(sub_data.path, path);
+                sub_data.file_count = 0;
+                sub_data.txt_count = 0;
+                sub_data.c_count = 0;
+                sub_data.doc_count = 0;
+
+                sem_wait(semaphore);
+                process_directory(&sub_data);
+                sem_post(semaphore);
+
+                int fd = shm_open(SHARED_FILE_COUNT, O_RDWR, 0666);
+                if (fd == -1) {
+                    perror("Error opening shared memory (file_count)");
+                    exit(1);
+                }
+
+                int* sub_file_count = mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+                if (sub_file_count == MAP_FAILED) {
+                    perror("Error mapping shared memory (file_count)");
+                    exit(1);
+                }
+
+                pthread_mutex_t* sub_mutex = (pthread_mutex_t*)pthread_mutex_init(NULL, NULL);
+                if (sub_mutex == NULL) {
+                    perror("Error initializing mutex");
+                    exit(1);
+                }
+
+                pthread_mutex_lock(sub_mutex);
+                *sub_file_count += sub_data.file_count;
+                pthread_mutex_unlock(sub_mutex);
+
+                munmap(sub_file_count, sizeof(int));
+                close(fd);
+
+                exit(0);
+            }
+        } else if (S_ISREG(file_stat.st_mode)) {
+            data->file_count++;
+
+            char* file_extension = strrchr(entry->d_name, '.');
+            if (file_extension != NULL) {
+                if (strcmp(file_extension, ".txt") == 0) {
+                    pthread_mutex_lock(mutex);
+                    directory_data->txt_count++;
+                    pthread_mutex_unlock(mutex);
+                } else if (strcmp(file_extension, ".c") == 0) {
+                    pthread_mutex_lock(mutex);
+                    directory_data->c_count++;
+                    pthread_mutex_unlock(mutex);
+                } else if (strcmp(file_extension, ".doc") == 0) {
+                    pthread_mutex_lock(mutex);
+                    directory_data->doc_count++;
+                    pthread_mutex_unlock(mutex);
+                }
+                long long file_size = file_stat.st_size;
+
+                pthread_mutex_lock(mutex);
+                if (file_size < file_data->smallest_file_size) {
+                    strcpy(file_data->smallest_file, path);
+                    file_data->smallest_file_size = file_size;
+                }
+
+                if (file_size > file_data->largest_file_size) {
+                    strcpy(file_data->largest_file, path);
+                    file_data->largest_file_size = file_size;
+                }
+                               pthread_mutex_unlock(mutex);
+            }
+        }
+    }
+    closedir(dir);
+    pthread_exit(NULL);
+}
+
+int main() {
+    char root_path[MAX_PATH_LENGTH];
+    printf("Enter the root path: ");
+    fgets(root_path, MAX_PATH_LENGTH, stdin);
+    root_path[strcspn(root_path, "\n")] = '\0';
+
+    sem_unlink(SHARED_FILE_COUNT);
+    sem_unlink(SHARED_FILE_DATA);
+    sem_unlink(SHARED_SMALLEST_FILE_SIZE);
+    sem_unlink(SHARED_LARGEST_FILE_SIZE);
+
+    int fd = shm_open(SHARED_FILE_COUNT, O_CREAT | O_RDWR, 0666);
+    if (fd == -1) {
+        perror("Error opening shared memory (file_count)");
+        return 1;
+    }
+
+    if (ftruncate(fd, sizeof(int)) == -1) {
+        perror("Error truncating shared memory (file_count)");
+        return 1;
+    }
+
+    file_count = mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (file_count == MAP_FAILED) {
+        perror("Error mapping shared memory (file_count)");
+        return 1;
+    }
+
+    *file_count = 0;
+
+    int data_fd = shm_open(SHARED_FILE_DATA, O_CREAT | O_RDWR, 0666);
+    if (data_fd == -1) {
+        perror("Error opening shared memory (file_data)");
+        return 1;
+    }
+
+    if (ftruncate(data_fd, sizeof(FileData)) == -1) {
+        perror("Error truncating shared memory (file_data)");
+        return 1;
+    }
+
+    file_data = mmap(NULL, sizeof(FileData), PROT_READ | PROT_WRITE, MAP_SHARED, data_fd, 0);
+    if (file_data == MAP_FAILED) {
+        perror("Error mapping shared memory (file_data)");
+        return 1;
+    }
+
+    strcpy(file_data->smallest_file, "");
+    strcpy(file_data->largest_file, "");
+    file_data->smallest_file_size = LLONG_MAX;
+    file_data->largest_file_size = LLONG_MIN;
+
+    directory_data = malloc(sizeof(DirectoryData));
+    strcpy(directory_data->path, root_path);
+    directory_data->file_count = 0;
+    directory_data->txt_count = 0;
+    directory_data->c_count = 0;
+    directory_data->doc_count = 0;
+
+    mutex = (pthread_mutex_t*)pthread_mutex_init(NULL, NULL);
+    semaphore = sem_open(SHARED_FILE_COUNT, O_CREAT, 0666, 1);
+
+    process_directory(directory_data);
+
+    sem_wait(semaphore);
+
+    printf("Total number of files: %d\n", *file_count);
+    printf("Number of types of files:\n");
+    printf("  - .txt files: %d\n", directory_data->txt_count);
+    printf("  - .c files: %d\n", directory_data->c_count);
+    printf("  - .doc files: %d\n", directory_data->doc_count);
+    printf("The address of the file with the largest size: %s\n", file_data->largest_file);
+    printf("Size of the largest file: %lld bytes\n", file_data->largest_file_size);
+    printf("The address of the file with the smallest size: %s\n", file_data->smallest_file);
+    printf("Size of the smallest file: %lld bytes\n", file_data->smallest_file_size);
+    printf("Final size of the root folder: %d\n", directory_data->file_count);
+
+    sem_post(semaphore);
+
+    sem_close(semaphore);
+    munmap(file_count, sizeof(int));
+    close(fd);
+
+    munmap(file_data, sizeof(FileData));
+    close(data_fd);
+
+    return 0;
+}
