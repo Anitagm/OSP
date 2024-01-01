@@ -3,6 +3,9 @@
 #include <dirent.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <pthread.h>
+#include <semaphore.h>
+#include <limits.h>
 
 #define MAX_PATH_LENGTH 256
 
@@ -120,7 +123,7 @@ int main() {
     printf("Total number of files: %d\n", directory_data.file_count);
     printf("Number of types of files:\n");
     printf("TXT files: %d\n", directory_data.txt_count);
-    printf("C files: %d\n", directory_datac_count);
+    printf("C files: %d\n", directory_data.c_count);
     printf("DOC files: %d\n", directory_data.doc_count);
     printf("Smallest file: %s (%lld bytes)\n", directory_data.smallest_file, directory_data.smallest_file_size);
     printf("Largest file: %s (%lld bytes)\n", directory_data.largest_file, directory_data.largest_file_size);
