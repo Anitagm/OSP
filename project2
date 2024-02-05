@@ -1,0 +1,108 @@
+import java.util.LinkedList;
+import java.util.Queue;
+import java.util.Scanner;
+import java.util.concurrent.Semaphore;
+
+public class Main {
+    public static void main(String[] args) {
+        Scanner scanner = new Scanner(System.in);
+        int numR1 = scanner.nextInt();
+        int numR2 = scanner.nextInt();
+        int numR3 = scanner.nextInt();
+
+        int numProcessors = 4;
+        int numTasks = scanner.nextInt();
+        Task[] tasks = new Task[numTasks];
+        for (int i = 0; i < numTasks; i++) {
+            String name = scanner.next();
+            String type = scanner.next();
+            int duration = scanner.nextInt();
+            tasks[i] = new Task(name, type, duration);
+        }
+
+        System.out.println("----- FCFS -----");
+
+        Processor[] processors = new Processor[numProcessors];
+        Queue<Task> waitingQueue = new LinkedList<>();
+        Queue<Task> readyQueue = new LinkedList<>();
+        Semaphore semaphore = new Semaphore(1);
+
+        for (int i = 0; i < numProcessors; i++) {
+            processors[i] = new Processor(i, tasks, waitingQueue, readyQueue, semaphore);
+            processors[i].start();
+        }
+    }
+}
+
+class Task {
+    private String name;
+    private String type;
+    private int duration;
+
+    public Task(String name, String type, int duration) {
+        this.name = name;
+        this.type = type;
+        this.duration = duration;
+    }
+
+    public String getName() {
+        return name;
+    }
+
+    public String getType() {
+        return type;
+    }
+
+    public int getDuration() {
+        return duration;
+    }
+}
+
+class Processor extends Thread {
+    private int id;
+    private Task[] tasks;
+    private Queue<Task> waitingQueue;
+    private Queue<Task> readyQueue;
+    private Semaphore semaphore;
+
+    public Processor(int id, Task[] tasks, Queue<Task> waitingQueue, Queue<Task> readyQueue, Semaphore semaphore) {
+        this.id = id;
+        this.tasks = tasks;
+        this.waitingQueue = waitingQueue;
+        this.readyQueue = readyQueue;
+        this.semaphore = semaphore;
+    }
+
+    @Override
+    public void run() {
+        int currentTime = 0;
+        for (Task task : tasks) {
+            try {
+                semaphore.acquire();
+                waitingQueue.add(task);
+                semaphore.release();
+
+                while (!waitingQueue.isEmpty()) {
+                    Task currentTask = waitingQueue.poll();
+                    if (currentTask.getDuration() <= currentTime) {
+                        System.out.println("Core: " + (id + 1) + ", Time: " + currentTime + ", Task: " + currentTask.getName());
+                    } else {
+                        readyQueue.add(currentTask);
+                    }
+
+                    Thread.sleep(1000);
+                    currentTime++;
+
+                    if (readyQueue.isEmpty()) {
+                        System.out.println("Core: " + (id + 1) + ", Time: " + currentTime + ", Task: Idle");
+                    } else {
+                        Task nextTask = readyQueue.poll();
+                        System.out.println("Core: " + (id + 1) + ", Time: " + currentTime + ", Task: " + nextTask.getName());
+                    }
+                }
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+}
