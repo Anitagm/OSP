@@ -75,24 +75,36 @@ class Processor extends Thread {
 
     @Override
     public void run() {
-        int currentTime = 0;
+        public void run() {
+    int currentTime = 0;
+
+    // Send tasks to empty cores at time 1:
+    if (currentTime == 1) {
         for (Task task : tasks) {
             try {
                 semaphore.acquire();
                 waitingQueue.add(task);
                 semaphore.release();
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+        }
+    }
 
-                while (!waitingQueue.isEmpty()) {
-                    Task currentTask = waitingQueue.poll();
-                    if (currentTask.getDuration() <= currentTime) {
-                        System.out.println("Core: " + (id + 1) + ", Time: " + currentTime + ", Task: " + currentTask.getName());
-                    } else {
-                        readyQueue.add(currentTask);
-                    }
+    // Continue with the rest of the scheduling logic:
+    while (!waitingQueue.isEmpty()) {
+        Task currentTask = waitingQueue.poll();
+        if (currentTask.getDuration() <= currentTime) {
+            System.out.println("Core: " + (id + 1) + ", Time: " + currentTime + ", Task: " + currentTask.getName());
+        } else {
+            readyQueue.add(currentTask);
+        }
 
-                    Thread.sleep(1000);
-                    currentTime++;
+        Thread.sleep(1000);
+        currentTime++;
 
+        // ... rest of the code ...
+    
                     if (readyQueue.isEmpty()) {
                         System.out.println("Core: " + (id + 1) + ", Time: " + currentTime + ", Task: Idle");
                     } else {
